@@ -2,7 +2,7 @@
 pages/stock.py — Gestión de Stock
 """
 
-import streamlit st
+import streamlit as st
 import pandas as pd
 import io
 from fpdf import FPDF
@@ -11,7 +11,7 @@ from db import (get_productos, get_categorias, ajustar_stock,
 from utils import fmt_precio, fmt_stock, get_usuario, is_admin, require_admin
 
 
-# ── FUNCIONES LOCALES DE EXPORTACIÓN ─────────────────────────────────────────
+# ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
 def _exportar_excel_local(df, nombre_hoja="Datos"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -21,18 +21,26 @@ def _exportar_excel_local(df, nombre_hoja="Datos"):
 def _exportar_pdf_local(titulo, columnas, filas):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=14)
-    pdf.cell(0, 10, txt=titulo, ln=True, align="C")
+    pdf.set_font("Arial", style="B", size=14)
+    titulo_limpio = str(titulo).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.cell(0, 10, txt=titulo_limpio, ln=True, align="C")
     pdf.ln(8)
-    pdf.set_font("Helvetica", style="B", size=9)
-    ancho_col = pdf.epw / len(columnas)
+    
+    pdf.set_font("Arial", style="B", size=9)
+    ancho_col = pdf.epw / len(columnas) if columnas else 30
     for col in columnas:
-        pdf.cell(ancho_col, 8, txt=str(col), border=1, align="C")
+        col_limpio = str(col).replace("$", "ARS").replace("📋", "").replace("⚠️", "")
+        col_limpio = col_limpio.encode('latin-1', 'ignore').decode('latin-1')
+        pdf.cell(ancho_col, 8, txt=col_limpio, border=1, align="C")
     pdf.ln()
-    pdf.set_font("Helvetica", size=8)
+    
+    pdf.set_font("Arial", size=8)
     for fila in filas:
         for celda in fila:
-            pdf.cell(ancho_col, 8, txt=str(celda), border=1)
+            celda_limpia = str(celda).replace("$", "")
+            celda_limpia = "".join(c for c in celda_limpia if ord(c) < 128)
+            celda_limpia = celda_limpia.encode('latin-1', 'ignore').decode('latin-1')
+            pdf.cell(ancho_col, 8, txt=celda_limpia, border=1)
         pdf.ln()
     return pdf.output()
 
@@ -71,7 +79,7 @@ def render():
                 "P. Venta":    fmt_precio(p["precio_venta"]),
                 "P. Costo":    fmt_precio(p["precio_costo"]),
                 "Margen":      _margen(p),
-                "Estado":      "✅ OK" if float(p["stock_actual"]) > float(p["stock_minimo"]) else "⚠️ Bajo",
+                "Estado":      "OK" if float(p["stock_actual"]) > float(p["stock_minimo"]) else "Bajo",
                 "Activo":      "✓" if p["activo"] else "✗",
             } for p in productos])
 
@@ -90,9 +98,12 @@ def render():
             ce1, ce2 = st.columns(2)
             with ce1:
                 cols_i = ["ID", "Producto", "Categoria", "Stock", "P.Venta", "Estado"]
-                filas_i = [[r["ID"], r["Producto"], r["Categoría"], r["Stock"], r["P. Venta"], r["Estado"]] for r in df.to_dict(orient="records")]
-                pdf_i = _exportar_pdf_local("Maestro de Inventario Completo", cols_i, filas_i)
-                st.download_button("📄 PDF Inventario", data=pdf_i, file_name="inventario_completo.pdf", mime="application/pdf", use_container_width=True)
+                filas_i = [[str(p["id"]), str(p["nombre"]), str(p.get("categoria") or "—"), f"{float(p['stock_actual']):g} {p['unidad']}", f"{float(p['precio_venta']):.2f}", "OK" if float(p["stock_actual"]) > float(p["stock_minimo"]) else "Bajo"] for p in productos]
+                try:
+                    pdf_i = _exportar_pdf_local("Maestro de Inventario Completo", cols_i, filas_i)
+                    st.download_button("📄 PDF Inventario", data=pdf_i, file_name="inventario_completo.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error PDF: {e}")
             with ce2:
                 excel_i = _exportar_excel_local(df, "Inventario")
                 st.download_button("📊 Excel Inventario", data=excel_i, file_name="inventario_completo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
@@ -125,7 +136,7 @@ def render():
 
         prod_sel = nombres_prod.get(prod_sel_nombre)
         if prod_sel:
-            st.info(f"Stock actual: **{fmt_stock(prod_sel['stock_actual'], prod_sel['unidad'])}**  |  Mínimo: {fmt_stock(prod_sel['stock_minimo'], prod_sel['unidad'])}")
+            st.info(f"Stock actual: **{fmt_stock(prod_sel['stock_actual'], prod_sel['unidad'])}** |  Mínimo: {fmt_stock(prod_sel['stock_minimo'], prod_sel['unidad'])}")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -158,14 +169,17 @@ def render():
             } for p in bajos])
             st.dataframe(df_bajo, use_container_width=True, hide_index=True)
 
-            # Exportar Alertas de Stock Faltante (Útil como lista de compras)
+            # Exportar Alertas
             st.markdown("###### 📥 Exportar lista de reposición / faltantes")
             ca1, ca2 = st.columns(2)
             with ca1:
-                cols_a = ["Producto", "Categoria", "Stock Actual", "Minimo", "Faltante"]
-                filas_a = [[r["Producto"], r["Categoría"], r["Stock"], r["Mínimo"], r["Diferencia"]] for r in df_bajo.to_dict(orient="records")]
-                pdf_a = _exportar_pdf_local("Lista de Productos para Reposicion", cols_a, filas_a)
-                st.download_button("📄 PDF Faltantes", data=pdf_a, file_name="lista_reposicion.pdf", mime="application/pdf", use_container_width=True)
+                cols_a = ["Producto", "Categoria", "Stock Actual", "Minimo", "Diferencia"]
+                filas_a = [[str(p["nombre"]), str(p.get("categoria") or "—"), f"{float(p['stock_actual']):g} {p['unidad']}", f"{float(p['stock_minimo']):g} {p['unidad']}", f"{float(p['stock_actual']) - float(p['stock_minimo']):+g}"] for p in bajos]
+                try:
+                    pdf_a = _exportar_pdf_local("Lista de Productos para Reposicion", cols_a, filas_a)
+                    st.download_button("📄 PDF Faltantes", data=pdf_a, file_name="lista_reposicion.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error PDF: {e}")
             with ca2:
                 excel_a = _exportar_excel_local(df_bajo, "Reposicion")
                 st.download_button("📊 Excel Faltantes", data=excel_a, file_name="lista_reposicion.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
@@ -240,4 +254,4 @@ def _form_producto():
         st.session_state.pop("mostrar_form_prod", None)
         st.session_state.pop("form_producto", None)
         st.rerun()
-                      
+                                                       
