@@ -3,7 +3,55 @@ utils.py — Helpers compartidos de UI y formato
 """
 
 import streamlit as st
+import io
+import pandas as pd
+from fpdf import FPDF
+import streamlit as st
 
+def exportar_a_excel(df, nombre_hoja="Datos"):
+    """Convierte un DataFrame de Pandas en un archivo Excel binario."""
+    output = io.BytesIO()
+    # Usamos openpyxl como motor para generar .xlsx
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
+    return output.getvalue()
+
+def exportar_a_pdf(titulo_reporte, columnas, filas):
+    """
+    Genera un PDF limpio con una tabla de datos de forma dinámica.
+    - columnas: Lista con los nombres de las columnas ['Producto', 'Stock', ...]
+    - filas: Lista de listas o tuplas con los datos [[ 'Pan', 10, ... ], ...]
+    """
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12)
+    
+    # Título del reporte
+    pdf.set_font("Helvetica", style="B", size=16)
+    pdf.cell(0, 10, txt=titulo_reporte, ln=True, align="C")
+    pdf.ln(10) # Espacio
+    
+    # Tabla: Configuración básica de fuentes para el encabezado
+    pdf.set_font("Helvetica", style="B", size=10)
+    
+    # Calcular ancho automático por columna de forma equitativa
+    ancho_disponible = pdf.epw # Ancho de página imprimible
+    ancho_col = ancho_disponible / len(columnas)
+    
+    # Renderizar Encabezados
+    for col in columnas:
+        pdf.cell(ancho_col, 8, txt=str(col), border=1, align="C")
+    pdf.ln()
+    
+    # Renderizar Filas de datos
+    pdf.set_font("Helvetica", size=9)
+    for fila in filas:
+        for celda in fila:
+            pdf.cell(ancho_col, 8, txt=str(celda), border=1)
+        pdf.ln()
+        
+    return pdf.output()
+    
 
 # ── Formato ───────────────────────────────────────────────────────────────────
 
