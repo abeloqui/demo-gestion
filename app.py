@@ -10,6 +10,18 @@ from db import init_db, login, get_productos_stock_bajo
 page_config("Sistema de Gestión")
 apply_styles()
 
+# Ocultar el menú de navegación nativo superior de Streamlit
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 def pantalla_login():
     col1, col2, col3 = st.columns([1, 1.2, 1])
@@ -161,3 +173,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
