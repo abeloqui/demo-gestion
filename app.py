@@ -34,7 +34,7 @@ def pantalla_login():
                 st.session_state["usuario"] = user
                 st.session_state["carrito"] = []
                 st.session_state["caja_abierta"] = None
-                st.session_state["pagina_actual"] = "🏠 Inicio"  # Inicializador de navegación
+                st.session_state["pagina_actual"] = "🏠 Inicio"
                 st.rerun()
             else:
                 st.error("Usuario o contraseña incorrectos.")
@@ -71,7 +71,6 @@ def sidebar_nav():
         if is_admin():
             opciones.append("⚙️ Administración")
 
-        # Buscamos el índice actual en base al estado de sesión para sincronizar Sidebar e Inicio
         idx_actual = opciones.index(st.session_state["pagina_actual"]) if st.session_state["pagina_actual"] in opciones else 0
 
         pagina = st.radio(
@@ -82,7 +81,6 @@ def sidebar_nav():
             label_visibility="collapsed"
         )
         
-        # Sincronizamos el estado de la página con la elección de la radio
         st.session_state["pagina_actual"] = pagina
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -99,7 +97,6 @@ def pagina_inicio():
     st.title(f"Bienvenido, {u.get('nombre', '')} 👋")
     st.caption("Panel principal del sistema")
 
-    # Alerta de Stock Bajo
     stock_bajo = get_productos_stock_bajo()
     if stock_bajo:
         st.warning(
@@ -112,7 +109,6 @@ def pagina_inicio():
 
     col1, col2, col3, col4 = st.columns(4)
     
-    # Módulos configurados con su clave exacta de navegación
     modulos = [
         {"icon": "🛒", "titulo": "Punto de Venta", "nav": "🛒 Punto de Venta", "desc": "Registrá ventas y cobrá al cliente.", "color": "#F05A28"},
         {"icon": "📦", "titulo": "Stock",          "nav": "📦 Stock",          "desc": "Controlá inventario y mercadería.", "color": "#1D3557"},
@@ -122,41 +118,63 @@ def pagina_inicio():
     
     columnas = [col1, col2, col3, col4]
 
+    # Estilo CSS inyectado para que el botón nativo ocupe toda la tarjeta y sea invisible
+    st.markdown("""
+    <style>
+    div[data-testid="stColumn"] {
+        position: relative;
+    }
+    .tarjeta-clicable-invisible button {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: transparent !important;
+        border: none !important;
+        color: transparent !important;
+        cursor: pointer;
+        z-index: 10;
+    }
+    .tarjeta-clicable-invisible button:hover {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     for col, m in zip(columnas, modulos):
         with col:
-            # Contenedor visual estilizado
+            # Dibujamos la tarjeta bonita en HTML
             st.markdown(f"""
-            <div style="background:{m['color']}; border-radius:12px 12px 0px 0px; padding:20px 16px 10px 16px;
-                        text-align:center; margin-bottom:-5px; box-shadow:0 4px 6px rgba(0,0,0,0.08);">
-                <div style="font-size:36px;">{m['icon']}</div>
-                <div style="font-size:15px; font-weight:700; color:#fff; margin:6px 0 2px;">{m['titulo']}</div>
-                <div style="font-size:11px; color:rgba(255,255,255,0.7); line-height:1.3; min-height:32px;">{m['desc']}</div>
+            <div style="background:{m['color']}; border-radius:12px; padding:24px 16px;
+                        text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.1); height: 160px;">
+                <div style="font-size:38px; margin-bottom: 6px;">{m['icon']}</div>
+                <div style="font-size:16px; font-weight:700; color:#fff; margin-bottom:6px;">{m['titulo']}</div>
+                <div style="font-size:11.5px; color:rgba(255,255,255,0.75); line-height:1.4;">{m['desc']}</div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Botón de acción nativo acoplado abajo de la tarjeta
-            if st.button(f"Ir a {m['titulo']} ➔", key=f"btn_nav_{m['titulo']}", use_container_width=True):
+            # El botón se renderiza invisible justo encima de la caja usando la clase CSS personalizada
+            st.markdown('<div class="tarjeta-clicable-invisible">', unsafe_allow_html=True)
+            if st.button("", key=f"action_nav_{m['titulo']}", use_container_width=True):
                 st.session_state["pagina_actual"] = m["nav"]
                 st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Inicializar DB
     try:
         init_db()
     except Exception as e:
         st.error(f"Error de conexión a la base de datos: {e}")
-        st.info("Verificá que la variable `DATABASE_URL` esté configurada en los secrets.")
         st.stop()
 
-    # Login
     if not st.session_state.get("usuario"):
         pantalla_login()
         return
 
-    # Inicializar estado de sesión
     if "carrito" not in st.session_state:
         st.session_state["carrito"] = []
     if "caja_abierta" not in st.session_state:
@@ -164,10 +182,8 @@ def main():
     if "pagina_actual" not in st.session_state:
         st.session_state["pagina_actual"] = "🏠 Inicio"
 
-    # Navegación (Sincronizada por estado de sesión)
     pagina = sidebar_nav()
 
-    # Enrutador de páginas
     if pagina == "🏠 Inicio":
         pagina_inicio()
     elif pagina == "🛒 Punto de Venta":
@@ -189,4 +205,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+                         
