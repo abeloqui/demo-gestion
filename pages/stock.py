@@ -2,11 +2,39 @@
 pages/stock.py — Gestión de Stock
 """
 
-import streamlit as st
+import streamlit st
 import pandas as pd
+import io
+from fpdf import FPDF
 from db import (get_productos, get_categorias, ajustar_stock,
                 upsert_producto, get_productos_stock_bajo)
 from utils import fmt_precio, fmt_stock, get_usuario, is_admin, require_admin
+
+
+# ── FUNCIONES LOCALES DE EXPORTACIÓN ─────────────────────────────────────────
+def _exportar_excel_local(df, nombre_hoja="Datos"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
+    return output.getvalue()
+
+def _exportar_pdf_local(titulo, columnas, filas):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=14)
+    pdf.cell(0, 10, txt=titulo, ln=True, align="C")
+    pdf.ln(8)
+    pdf.set_font("Helvetica", style="B", size=9)
+    ancho_col = pdf.epw / len(columnas)
+    for col in columnas:
+        pdf.cell(ancho_col, 8, txt=str(col), border=1, align="C")
+    pdf.ln()
+    pdf.set_font("Helvetica", size=8)
+    for fila in filas:
+        for celda in fila:
+            pdf.cell(ancho_col, 8, txt=str(celda), border=1)
+        pdf.ln()
+    return pdf.output()
 
 
 def render():
@@ -48,9 +76,7 @@ def render():
             } for p in productos])
 
             st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
+                df, use_container_width=True, hide_index=True,
                 column_config={
                     "ID":      st.column_config.NumberColumn(width="small"),
                     "Stock":   st.column_config.TextColumn(width="medium"),
@@ -59,11 +85,21 @@ def render():
                 }
             )
 
+            # Exportar Inventario Completo
+            st.markdown("###### 📥 Exportar Maestro de Inventario")
+            ce1, ce2 = st.columns(2)
+            with ce1:
+                cols_i = ["ID", "Producto", "Categoria", "Stock", "P.Venta", "Estado"]
+                filas_i = [[r["ID"], r["Producto"], r["Categoría"], r["Stock"], r["P. Venta"], r["Estado"]] for r in df.to_dict(orient="records")]
+                pdf_i = _exportar_pdf_local("Maestro de Inventario Completo", cols_i, filas_i)
+                st.download_button("📄 PDF Inventario", data=pdf_i, file_name="inventario_completo.pdf", mime="application/pdf", use_container_width=True)
+            with ce2:
+                excel_i = _exportar_excel_local(df, "Inventario")
+                st.download_button("📊 Excel Inventario", data=excel_i, file_name="inventario_completo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
             if is_admin():
                 st.caption("Para editar un producto, ingresá su ID abajo:")
-                edit_id = st.number_input("ID a editar", min_value=1, step=1,
-                                          key="edit_prod_id", label_visibility="collapsed",
-                                          placeholder="ID del producto")
+                edit_id = st.number_input("ID a editar", min_value=1, step=1, key="edit_prod_id", label_visibility="collapsed", placeholder="ID del producto")
                 if st.button("✏️ Editar producto"):
                     prod = next((p for p in productos if p["id"] == edit_id), None)
                     if prod:
@@ -72,7 +108,6 @@ def render():
                     else:
                         st.error("ID no encontrado.")
 
-        # Formulario ABM de producto (admin)
         if is_admin() and st.session_state.get("mostrar_form_prod"):
             _form_producto()
 
@@ -86,13 +121,7 @@ def render():
         with c1:
             prod_sel_nombre = st.selectbox("Producto", list(nombres_prod.keys()))
         with c2:
-            tipo = st.selectbox("Tipo de movimiento",
-                                ["entrada", "salida", "ajuste"],
-                                format_func=lambda x: {
-                                    "entrada": "📥 Entrada (recepción/compra)",
-                                    "salida":  "📤 Salida (pérdida/retiro)",
-                                    "ajuste":  "🔧 Ajuste de inventario",
-                                }[x])
+            tipo = st.selectbox("Tipo de movimiento", ["entrada", "salida", "ajuste"], format_func=lambda x: {"entrada": "📥 Entrada (recepción/compra)", "salida": "📤 Salida (pérdida/retiro)", "ajuste": "🔧 Ajuste de inventario"}[x])
 
         prod_sel = nombres_prod.get(prod_sel_nombre)
         if prod_sel:
@@ -108,10 +137,7 @@ def render():
             if not motivo.strip():
                 st.error("Ingresá un motivo para el movimiento.")
             else:
-                ajustar_stock(
-                    prod_sel["id"], cantidad, tipo,
-                    motivo.strip(), usuario["id"]
-                )
+                ajustar_stock(prod_sel["id"], cantidad, tipo, motivo.strip(), usuario["id"])
                 st.success(f"✅ Movimiento registrado: {tipo} de {cantidad:g} {prod_sel['unidad']} en **{prod_sel_nombre}**")
                 st.rerun()
 
@@ -131,6 +157,18 @@ def render():
                 "Diferencia": f"{float(p['stock_actual']) - float(p['stock_minimo']):+g}",
             } for p in bajos])
             st.dataframe(df_bajo, use_container_width=True, hide_index=True)
+
+            # Exportar Alertas de Stock Faltante (Útil como lista de compras)
+            st.markdown("###### 📥 Exportar lista de reposición / faltantes")
+            ca1, ca2 = st.columns(2)
+            with ca1:
+                cols_a = ["Producto", "Categoria", "Stock Actual", "Minimo", "Faltante"]
+                filas_a = [[r["Producto"], r["Categoría"], r["Stock"], r["Mínimo"], r["Diferencia"]] for r in df_bajo.to_dict(orient="records")]
+                pdf_a = _exportar_pdf_local("Lista de Productos para Reposicion", cols_a, filas_a)
+                st.download_button("📄 PDF Faltantes", data=pdf_a, file_name="lista_reposicion.pdf", mime="application/pdf", use_container_width=True)
+            with ca2:
+                excel_a = _exportar_excel_local(df_bajo, "Reposicion")
+                st.download_button("📊 Excel Faltantes", data=excel_a, file_name="lista_reposicion.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 
 def _margen(p) -> str:
@@ -158,22 +196,13 @@ def _form_producto():
         c1, c2 = st.columns(2)
         with c1:
             nombre = st.text_input("Nombre *", value=prod.get("nombre", ""))
-            cat_default = next(
-                (c["nombre"] for c in categorias if c["id"] == prod.get("categoria_id")),
-                cat_nombres[0] if cat_nombres else ""
-            )
-            categoria = st.selectbox("Categoría", cat_nombres,
-                                     index=cat_nombres.index(cat_default) if cat_default in cat_nombres else 0)
-            unidad = st.selectbox("Unidad", ["unidad", "kg", "litro", "docena", "cajón", "bolsa"],
-                                  index=["unidad","kg","litro","docena","cajón","bolsa"].index(prod.get("unidad","unidad"))
-                                  if prod.get("unidad","unidad") in ["unidad","kg","litro","docena","cajón","bolsa"] else 0)
+            cat_default = next((c["nombre"] for c in categorias if c["id"] == prod.get("categoria_id")), cat_nombres[0] if cat_nombres else "")
+            categoria = st.selectbox("Categoría", cat_nombres, index=cat_nombres.index(cat_default) if cat_default in cat_nombres else 0)
+            unidad = st.selectbox("Unidad", ["unidad", "kg", "litro", "docena", "cajón", "bolsa"], index=["unidad","kg","litro","docena","cajón","bolsa"].index(prod.get("unidad","unidad")) if prod.get("unidad","unidad") in ["unidad","kg","litro","docena","cajón","bolsa"] else 0)
         with c2:
-            precio_venta = st.number_input("Precio de venta *", min_value=0.0,
-                                           value=float(prod.get("precio_venta", 0)), step=100.0)
-            precio_costo = st.number_input("Precio de costo", min_value=0.0,
-                                           value=float(prod.get("precio_costo", 0)), step=100.0)
-            stock_minimo = st.number_input("Stock mínimo (alerta)", min_value=0.0,
-                                           value=float(prod.get("stock_minimo", 0)), step=1.0)
+            precio_venta = st.number_input("Precio de venta *", min_value=0.0, value=float(prod.get("precio_venta", 0)), step=100.0)
+            precio_costo = st.number_input("Precio de costo", min_value=0.0, value=float(prod.get("precio_costo", 0)), step=100.0)
+            stock_minimo = st.number_input("Stock mínimo (alerta)", min_value=0.0, value=float(prod.get("stock_minimo", 0)), step=1.0)
 
         if es_nuevo:
             stock_inicial = st.number_input("Stock inicial", min_value=0.0, value=0.0, step=1.0)
@@ -211,3 +240,4 @@ def _form_producto():
         st.session_state.pop("mostrar_form_prod", None)
         st.session_state.pop("form_producto", None)
         st.rerun()
+                      
