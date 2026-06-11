@@ -10,18 +10,6 @@ from db import init_db, login, get_productos_stock_bajo
 page_config("Sistema de Gestión")
 apply_styles()
 
-# Ocultar el menú de navegación nativo superior de Streamlit
-st.markdown(
-    """
-    <style>
-    [data-testid="stSidebarNav"] {
-        display: none !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 
 def pantalla_login():
     col1, col2, col3 = st.columns([1, 1.2, 1])
@@ -46,6 +34,7 @@ def pantalla_login():
                 st.session_state["usuario"] = user
                 st.session_state["carrito"] = []
                 st.session_state["caja_abierta"] = None
+                st.session_state["pagina_actual"] = "🏠 Inicio"  # Inicializador de navegación
                 st.rerun()
             else:
                 st.error("Usuario o contraseña incorrectos.")
@@ -82,11 +71,23 @@ def sidebar_nav():
         if is_admin():
             opciones.append("⚙️ Administración")
 
-        pagina = st.radio("Navegación", opciones, label_visibility="collapsed")
+        # Buscamos el índice actual en base al estado de sesión para sincronizar Sidebar e Inicio
+        idx_actual = opciones.index(st.session_state["pagina_actual"]) if st.session_state["pagina_actual"] in opciones else 0
+
+        pagina = st.radio(
+            "Navegación", 
+            opciones, 
+            index=idx_actual, 
+            key="navigation_radio",
+            label_visibility="collapsed"
+        )
+        
+        # Sincronizamos el estado de la página con la elección de la radio
+        st.session_state["pagina_actual"] = pagina
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🚪 Cerrar sesión", use_container_width=True):
-            for key in ["usuario", "carrito", "caja_abierta"]:
+            for key in ["usuario", "carrito", "caja_abierta", "pagina_actual"]:
                 st.session_state.pop(key, None)
             st.rerun()
 
@@ -98,6 +99,7 @@ def pagina_inicio():
     st.title(f"Bienvenido, {u.get('nombre', '')} 👋")
     st.caption("Panel principal del sistema")
 
+    # Alerta de Stock Bajo
     stock_bajo = get_productos_stock_bajo()
     if stock_bajo:
         st.warning(
@@ -109,22 +111,33 @@ def pagina_inicio():
     st.subheader("Acceso rápido")
 
     col1, col2, col3, col4 = st.columns(4)
+    
+    # Módulos configurados con su clave exacta de navegación
     modulos = [
-        ("🛒", "Punto de Venta", "Registrá ventas y cobrá al cliente", "#F05A28"),
-        ("📦", "Stock",          "Controlá inventario y recibí mercadería", "#1D3557"),
-        ("💰", "Caja",           "Apertura, cierre y resumen del día", "#1B7A4A"),
-        ("📊", "Reportes",       "Estadísticas y rankings de productos", "#2B4E7A"),
+        {"icon": "🛒", "titulo": "Punto de Venta", "nav": "🛒 Punto de Venta", "desc": "Registrá ventas y cobrá al cliente.", "color": "#F05A28"},
+        {"icon": "📦", "titulo": "Stock",          "nav": "📦 Stock",          "desc": "Controlá inventario y mercadería.", "color": "#1D3557"},
+        {"icon": "💰", "titulo": "Caja",           "nav": "💰 Caja",           "desc": "Apertura, cierre y resumen diario.", "color": "#1B7A4A"},
+        {"icon": "📊", "titulo": "Reportes",       "nav": "📊 Reportes",       "desc": "Estadísticas y rankings comerciales.", "color": "#2B4E7A"},
     ]
-    for col, (icon, titulo, desc, color) in zip([col1, col2, col3, col4], modulos):
+    
+    columnas = [col1, col2, col3, col4]
+
+    for col, m in zip(columnas, modulos):
         with col:
+            # Contenedor visual estilizado
             st.markdown(f"""
-            <div style="background:{color};border-radius:12px;padding:20px 16px;
-                        text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.12);">
-                <div style="font-size:32px;">{icon}</div>
-                <div style="font-size:14px;font-weight:700;color:#fff;margin:8px 0 4px;">{titulo}</div>
-                <div style="font-size:11px;color:rgba(255,255,255,0.65);line-height:1.4;">{desc}</div>
+            <div style="background:{m['color']}; border-radius:12px 12px 0px 0px; padding:20px 16px 10px 16px;
+                        text-align:center; margin-bottom:-5px; box-shadow:0 4px 6px rgba(0,0,0,0.08);">
+                <div style="font-size:36px;">{m['icon']}</div>
+                <div style="font-size:15px; font-weight:700; color:#fff; margin:6px 0 2px;">{m['titulo']}</div>
+                <div style="font-size:11px; color:rgba(255,255,255,0.7); line-height:1.3; min-height:32px;">{m['desc']}</div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Botón de acción nativo acoplado abajo de la tarjeta
+            if st.button(f"Ir a {m['titulo']} ➔", key=f"btn_nav_{m['titulo']}", use_container_width=True):
+                st.session_state["pagina_actual"] = m["nav"]
+                st.rerun()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -148,10 +161,13 @@ def main():
         st.session_state["carrito"] = []
     if "caja_abierta" not in st.session_state:
         st.session_state["caja_abierta"] = None
+    if "pagina_actual" not in st.session_state:
+        st.session_state["pagina_actual"] = "🏠 Inicio"
 
-    # Navegación
+    # Navegación (Sincronizada por estado de sesión)
     pagina = sidebar_nav()
 
+    # Enrutador de páginas
     if pagina == "🏠 Inicio":
         pagina_inicio()
     elif pagina == "🛒 Punto de Venta":
@@ -173,4 +189,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
