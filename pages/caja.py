@@ -4,9 +4,36 @@ pages/caja.py — Gestión de Caja
 
 import streamlit as st
 import pandas as pd
+import io
 from datetime import datetime, timedelta
+from fpdf import FPDF
 from db import get_ventas, get_resumen_caja, cerrar_caja, get_cierres, get_venta_detalle
 from utils import fmt_precio, MEDIOS_PAGO, get_usuario
+
+# ── FUNCIONES LOCALES DE EXPORTACIÓN ─────────────────────────────────────────
+def _exportar_excel_local(df, nombre_hoja="Datos"):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
+    return output.getvalue()
+
+def _exportar_pdf_local(titulo, columnas, filas):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=16)
+    pdf.cell(0, 10, txt=titulo, ln=True, align="C")
+    pdf.ln(10)
+    pdf.set_font("Helvetica", style="B", size=10)
+    ancho_col = pdf.epw / len(columnas)
+    for col in columnas:
+        pdf.cell(ancho_col, 8, txt=str(col), border=1, align="C")
+    pdf.ln()
+    pdf.set_font("Helvetica", size=9)
+    for fila in filas:
+        for celda in fila:
+            pdf.cell(ancho_col, 8, txt=str(celda), border=1)
+        pdf.ln()
+    return pdf.output()
 
 
 def render():
@@ -75,6 +102,18 @@ def render():
                     "Cajero":   v["cajero"],
                 } for v in ventas_hoy])
                 st.dataframe(df, use_container_width=True, hide_index=True)
+
+                # Exportar Ventas de Hoy
+                st.markdown("###### 📥 Exportar listado de ventas actuales")
+                cx1, cx2 = st.columns(2)
+                with cx1:
+                    columnas_v = ["Nº", "Hora", "Total", "Medio Pago", "Cajero"]
+                    filas_v = [[v["Nº"], v["Hora"], v["Total"], v["Pago"], v["Cajero"]] for v in df.to_dict(orient="records")]
+                    pdf_v = _exportar_pdf_local(f"Ventas del Dia {ahora.strftime('%d-%m-%Y')}", columnas_v, filas_v)
+                    st.download_button("📄 PDF Ventas", data=pdf_v, file_name=f"ventas_{ahora.strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
+                with cx2:
+                    excel_v = _exportar_excel_local(df, "Ventas de Hoy")
+                    st.download_button("📊 Excel Ventas", data=excel_v, file_name=f"ventas_{ahora.strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
                 # Ver detalle de venta
                 with st.expander("🔍 Ver detalle de una venta"):
@@ -151,7 +190,7 @@ def render():
         st.subheader("Historial de cierres")
         cierres = get_cierres(limit=30)
         if not cierres:
-            st.info("No hay cierres registrados.")
+            st.info("No hay closures registrados.")
         else:
             df = pd.DataFrame([{
                 "Apertura":    c["fecha_apertura"].strftime("%d/%m %H:%M") if c["fecha_apertura"] else "",
@@ -163,3 +202,16 @@ def render():
                 "Total":       fmt_precio(c["total_ventas"]),
             } for c in cierres])
             st.dataframe(df, use_container_width=True, hide_index=True)
+
+            # Exportar Historial
+            st.markdown("###### 📥 Exportar historial de cierres")
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                cols_h = ["Apertura", "Cierre", "Cajero", "Ventas", "Efectivo", "Digital", "Total"]
+                filas_h = [[c["Apertura"], c["Cierre"], c["Cajero"], c["Ventas"], c["Efectivo"], c["Digital"], c["Total"]] for c in df.to_dict(orient="records")]
+                pdf_h = _exportar_pdf_local("Historial de Cierres de Caja", cols_h, filas_h)
+                st.download_button("📄 PDF Historial", data=pdf_h, file_name="historial_cierres.pdf", mime="application/pdf", use_container_width=True)
+            with ch2:
+                excel_h = _exportar_excel_local(df, "Historial Cierres")
+                st.download_button("📊 Excel Historial", data=excel_h, file_name="historial_cierres.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    
