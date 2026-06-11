@@ -13,7 +13,7 @@ from db import (get_reporte_productos_mas_vendidos, get_reporte_ventas_por_dia,
                 get_productos_stock_bajo, get_ventas)
 from utils import fmt_precio
 
-# ── FUNCIONES LOCALES DE EXPORTACIÓN ─────────────────────────────────────────
+# ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
 def _exportar_excel_local(df, nombre_hoja="Datos"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -23,18 +23,26 @@ def _exportar_excel_local(df, nombre_hoja="Datos"):
 def _exportar_pdf_local(titulo, columnas, filas):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=14)
-    pdf.cell(0, 10, txt=titulo, ln=True, align="C")
+    pdf.set_font("Arial", style="B", size=14)
+    titulo_limpio = str(titulo).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.cell(0, 10, txt=titulo_limpio, ln=True, align="C")
     pdf.ln(8)
-    pdf.set_font("Helvetica", style="B", size=10)
-    ancho_col = pdf.epw / len(columnas)
+    
+    pdf.set_font("Arial", style="B", size=10)
+    ancho_col = pdf.epw / len(columnas) if columnas else 30
     for col in columnas:
-        pdf.cell(ancho_col, 8, txt=str(col), border=1, align="C")
+        col_limpio = str(col).replace("$", "ARS").replace("📈", "").replace("🏆", "")
+        col_limpio = col_limpio.encode('latin-1', 'ignore').decode('latin-1')
+        pdf.cell(ancho_col, 8, txt=col_limpio, border=1, align="C")
     pdf.ln()
-    pdf.set_font("Helvetica", size=9)
+    
+    pdf.set_font("Arial", size=9)
     for fila in filas:
         for celda in fila:
-            pdf.cell(ancho_col, 8, txt=str(celda), border=1)
+            celda_limpia = str(celda).replace("$", "")
+            celda_limpia = "".join(c for c in celda_limpia if ord(c) < 128)
+            celda_limpia = celda_limpia.encode('latin-1', 'ignore').decode('latin-1')
+            pdf.cell(ancho_col, 8, txt=celda_limpia, border=1)
         pdf.ln()
     return pdf.output()
 
@@ -102,23 +110,26 @@ def render():
 
             st.markdown("---")
 
-            # Botones de exportación de estadísticas básicas diarias
+            # Botones de exportación
             st.markdown("###### 📥 Exportar planilla de ventas del período")
             cx1, cx2 = st.columns(2)
             with cx1:
+                cols_d = ["Fecha", "Transacciones", "Total"]
+                filas_d = [[r["dia"].strftime("%d/%m/%Y"), str(r["cantidad"]), f"{float(r['total']):.2f}"] for r in ventas_dia]
+                try:
+                    pdf_d = _exportar_pdf_local("Reporte de Ventas Diarias", cols_d, filas_d)
+                    st.download_button("📄 PDF Período", data=pdf_d, file_name="ventas_periodo.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error PDF: {e}")
+            with cx2:
                 df_export_dia = df.copy()
                 df_export_dia["dia"] = df_export_dia["dia"].dt.strftime("%d/%m/%Y")
-                cols_d = ["Fecha", "Transacciones", "Total ($)"]
-                filas_d = [[r["dia"], r["cantidad"], r["total"]] for r in df_export_dia.to_dict(orient="records")]
-                pdf_d = _exportar_pdf_local("Reporte de Ventas Diarias", cols_d, filas_d)
-                st.download_button("📄 PDF Período", data=pdf_d, file_name="ventas_periodo.pdf", mime="application/pdf", use_container_width=True)
-            with cx2:
-                excel_d = _exportar_excel_local(df, "Ventas Diarias")
+                excel_d = _exportar_excel_local(df_export_dia, "Ventas Diarias")
                 st.download_button("📊 Excel Período", data=excel_d, file_name="ventas_periodo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
             st.markdown("---")
 
-            # Gráfico de línea
+            # Gráficos
             fig = px.area(
                 df, x="dia", y="total",
                 title="Ventas diarias",
@@ -132,7 +143,6 @@ def render():
             fig.update_traces(line_width=2.5, fillcolor="rgba(240,90,40,0.12)")
             st.plotly_chart(fig, use_container_width=True)
 
-            # Gráfico de barras cantidad
             fig2 = px.bar(
                 df, x="dia", y="cantidad",
                 title="Cantidad de ventas por día",
@@ -156,7 +166,6 @@ def render():
             col_graf, col_tabla = st.columns([1.4, 1])
 
             with col_graf:
-                # Top 10 por facturación
                 df_top = df_mv.head(10).sort_values("total_facturado")
                 fig = px.bar(
                     df_top, x="total_facturado", y="nombre", orientation="h",
@@ -171,22 +180,26 @@ def render():
                 df_show = df_mv[["nombre", "unidades_vendidas", "total_facturado"]].copy()
                 df_show.columns = ["Producto", "Unidades", "Facturado"]
                 
-                # Botones de exportación específicos del Ranking
-                cols_r = ["Producto", "Unidades", "Facturado ($)"]
-                filas_r = [[r["Producto"], r["Unidades"], r["Facturado"]] for r in df_show.to_dict(orient="records")]
-                pdf_r = _exportar_pdf_local("Ranking de Productos Mas Vendidos", cols_r, filas_r)
+                # Exportar Ranking
+                cols_r = ["Producto", "Unidades", "Facturado"]
+                filas_r = [[str(r["nombre"]), f"{float(r['unidades_vendidas']):g}", f"{float(r['total_facturado']):.2f}"] for r in mas_vendidos]
                 
                 cxb1, cxb2 = st.columns(2)
-                cxb1.download_button("📄 PDF Rank", data=pdf_r, file_name="ranking_productos.pdf", mime="application/pdf", use_container_width=True)
-                excel_r = _exportar_excel_local(df_show, "Ranking")
-                cxb2.download_button("📊 Excel Rank", data=excel_r, file_name="ranking_productos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                with cxb1:
+                    try:
+                        pdf_r = _exportar_pdf_local("Ranking de Productos Mas Vendidos", cols_r, filas_r)
+                        st.download_button("📄 PDF Rank", data=pdf_r, file_name="ranking_productos.pdf", mime="application/pdf", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error PDF: {e}")
+                with cxb2:
+                    excel_r = _exportar_excel_local(df_show, "Ranking")
+                    st.download_button("📊 Excel Rank", data=excel_r, file_name="ranking_productos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 df_show["Facturado"] = df_show["Facturado"].apply(fmt_precio)
                 df_show.index = range(1, len(df_show) + 1)
                 st.dataframe(df_show, use_container_width=True)
 
-            # Pie por categoría
             if "categoria" in df_mv.columns:
                 df_cat = df_mv.groupby("categoria")["total_facturado"].sum().reset_index()
                 fig_pie = px.pie(df_cat, values="total_facturado", names="categoria", title="Facturación por categoría", color_discrete_sequence=px.colors.qualitative.Set2)
@@ -215,4 +228,4 @@ def render():
             st.plotly_chart(fig, use_container_width=True)
 
             st.dataframe(df_b[["Producto", "Categoría", "Stock actual", "Mínimo", "Diferencia", "Unidad"]], use_container_width=True, hide_index=True)
-      
+                      
