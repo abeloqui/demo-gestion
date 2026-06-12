@@ -4,47 +4,13 @@ pages/reportes.py — Reportes y estadísticas
 
 import streamlit as st
 import pandas as pd
-import io
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
-from fpdf import FPDF
 from db import (get_reporte_productos_mas_vendidos, get_reporte_ventas_por_dia,
                 get_productos_stock_bajo, get_ventas)
 from utils import fmt_precio
-
-# ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
-def _exportar_excel_local(df, nombre_hoja="Datos"):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
-    return output.getvalue()
-
-def _exportar_pdf_local(titulo, columnas, filas):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", style="B", size=14)
-    titulo_limpio = str(titulo).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 10, txt=titulo_limpio, ln=True, align="C")
-    pdf.ln(8)
-    
-    pdf.set_font("Arial", style="B", size=10)
-    ancho_col = pdf.epw / len(columnas) if columnas else 30
-    for col in columnas:
-        col_limpio = str(col).replace("$", "ARS").replace("📈", "").replace("🏆", "")
-        col_limpio = col_limpio.encode('latin-1', 'ignore').decode('latin-1')
-        pdf.cell(ancho_col, 8, txt=col_limpio, border=1, align="C")
-    pdf.ln()
-    
-    pdf.set_font("Arial", size=9)
-    for fila in filas:
-        for celda in fila:
-            celda_limpia = str(celda).replace("$", "")
-            celda_limpia = "".join(c for c in celda_limpia if ord(c) < 128)
-            celda_limpia = celda_limpia.encode('latin-1', 'ignore').decode('latin-1')
-            pdf.cell(ancho_col, 8, txt=celda_limpia, border=1)
-        pdf.ln()
-    return pdf.output()
+from pdf_exports import exportar_mas_vendidos
 
 
 def render():
@@ -82,13 +48,14 @@ def render():
     dt_desde = datetime.combine(fecha_desde, datetime.min.time())
     dt_hasta = datetime.combine(fecha_hasta, datetime.max.time().replace(microsecond=0))
 
+    # Obtenemos las consultas del período de forma global para compartirlas entre pestañas
+    ventas_dia = get_reporte_ventas_por_dia(dt_desde, dt_hasta)
+
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tab1, tab2, tab3 = st.tabs(["📈 Ventas por día", "🏆 Más vendidos", "⚠️ Stock bajo"])
 
     # ── TAB 1: Ventas por día ─────────────────────────────────────────────────
     with tab1:
-        ventas_dia = get_reporte_ventas_por_dia(dt_desde, dt_hasta)
-
         if not ventas_dia:
             st.info("No hay ventas en el período seleccionado.")
         else:
@@ -110,26 +77,6 @@ def render():
 
             st.markdown("---")
 
-            # Botones de exportación
-            st.markdown("###### 📥 Exportar planilla de ventas del período")
-            cx1, cx2 = st.columns(2)
-            with cx1:
-                cols_d = ["Fecha", "Transacciones", "Total"]
-                filas_d = [[r["dia"].strftime("%d/%m/%Y"), str(r["cantidad"]), f"{float(r['total']):.2f}"] for r in ventas_dia]
-                try:
-                    pdf_d = _exportar_pdf_local("Reporte de Ventas Diarias", cols_d, filas_d)
-                    st.download_button("📄 PDF Período", data=pdf_d, file_name="ventas_periodo.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error PDF: {e}")
-            with cx2:
-                df_export_dia = df.copy()
-                df_export_dia["dia"] = df_export_dia["dia"].dt.strftime("%d/%m/%Y")
-                excel_d = _exportar_excel_local(df_export_dia, "Ventas Diarias")
-                st.download_button("📊 Excel Período", data=excel_d, file_name="ventas_periodo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-            st.markdown("---")
-
-            # Gráficos
             fig = px.area(
                 df, x="dia", y="total",
                 title="Ventas diarias",
@@ -179,26 +126,25 @@ def render():
                 st.subheader("Ranking completo")
                 df_show = df_mv[["nombre", "unidades_vendidas", "total_facturado"]].copy()
                 df_show.columns = ["Producto", "Unidades", "Facturado"]
-                
-                # Exportar Ranking
-                cols_r = ["Producto", "Unidades", "Facturado"]
-                filas_r = [[str(r["nombre"]), f"{float(r['unidades_vendidas']):g}", f"{float(r['total_facturado']):.2f}"] for r in mas_vendidos]
-                
-                cxb1, cxb2 = st.columns(2)
-                with cxb1:
-                    try:
-                        pdf_r = _exportar_pdf_local("Ranking de Productos Mas Vendidos", cols_r, filas_r)
-                        st.download_button("📄 PDF Rank", data=pdf_r, file_name="ranking_productos.pdf", mime="application/pdf", use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error PDF: {e}")
-                with cxb2:
-                    excel_r = _exportar_excel_local(df_show, "Ranking")
-                    st.download_button("📊 Excel Rank", data=excel_r, file_name="ranking_productos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
                 df_show["Facturado"] = df_show["Facturado"].apply(fmt_precio)
                 df_show.index = range(1, len(df_show) + 1)
                 st.dataframe(df_show, use_container_width=True)
+
+            # Exportación PDF de productos más vendidos
+            st.markdown("---")
+            pdf_mv = exportar_mas_vendidos(
+                productos=mas_vendidos,
+                ventas_dia=ventas_dia,
+                fecha_desde=fecha_desde,
+                fecha_hasta=fecha_hasta,
+            )
+            st.download_button(
+                label="📄 Exportar reporte comercial PDF",
+                data=pdf_mv,
+                file_name=f"reporte_{fecha_desde}_{fecha_hasta}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
             if "categoria" in df_mv.columns:
                 df_cat = df_mv.groupby("categoria")["total_facturado"].sum().reset_index()
@@ -228,4 +174,4 @@ def render():
             st.plotly_chart(fig, use_container_width=True)
 
             st.dataframe(df_b[["Producto", "Categoría", "Stock actual", "Mínimo", "Diferencia", "Unidad"]], use_container_width=True, hide_index=True)
-                      
+          
