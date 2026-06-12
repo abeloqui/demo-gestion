@@ -5,46 +5,10 @@ pages/stock.py — Gestión de Stock
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import io
-from fpdf import FPDF
 from db import (get_productos, get_categorias, ajustar_stock,
                 upsert_producto, get_productos_stock_bajo)
 from utils import fmt_precio, fmt_stock, get_usuario, is_admin, require_admin
 from pdf_exports import exportar_stock
-
-
-# ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
-def _exportar_excel_local(df, nombre_hoja="Datos"):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
-    return output.getvalue()
-
-def _exportar_pdf_local(titulo, columnas, filas):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", style="B", size=14)
-    titulo_limpio = str(titulo).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 10, txt=titulo_limpio, ln=True, align="C")
-    pdf.ln(8)
-    
-    pdf.set_font("Arial", style="B", size=9)
-    ancho_col = pdf.epw / len(columnas) if columnas else 30
-    for col in columnas:
-        col_limpio = str(col).replace("$", "ARS").replace("📋", "").replace("⚠️", "")
-        col_limpio = col_limpio.encode('latin-1', 'ignore').decode('latin-1')
-        pdf.cell(ancho_col, 8, txt=col_limpio, border=1, align="C")
-    pdf.ln()
-    
-    pdf.set_font("Arial", size=8)
-    for fila in filas:
-        for celda in fila:
-            celda_limpia = str(celda).replace("$", "")
-            celda_limpia = "".join(c for c in celda_limpia if ord(c) < 128)
-            celda_limpia = celda_limpia.encode('latin-1', 'ignore').decode('latin-1')
-            pdf.cell(ancho_col, 8, txt=celda_limpia, border=1)
-        pdf.ln()
-    return pdf.output()
 
 
 def render():
@@ -58,15 +22,6 @@ def render():
         col_left, col_right = st.columns([3, 1])
         with col_left:
             busqueda = st.text_input("🔍 Buscar", placeholder="Nombre de producto...", label_visibility="collapsed")
-          with col_right:   # o donde quieras el boton, fuera del with col_left
-    pdf_bytes = exportar_stock(productos)
-    st.download_button(
-        label="📄 Exportar stock PDF",
-        data=pdf_bytes,
-        file_name=f"stock_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-        mime="application/pdf",
-        use_container_width=True,
-    )
         with col_right:
             if is_admin():
                 if st.button("➕ Nuevo producto", use_container_width=True, type="primary"):
@@ -104,20 +59,16 @@ def render():
                 }
             )
 
-            # Exportar Inventario Completo
-            st.markdown("###### 📥 Exportar Maestro de Inventario")
-            ce1, ce2 = st.columns(2)
-            with ce1:
-                cols_i = ["ID", "Producto", "Categoria", "Stock", "P.Venta", "Estado"]
-                filas_i = [[str(p["id"]), str(p["nombre"]), str(p.get("categoria") or "—"), f"{float(p['stock_actual']):g} {p['unidad']}", f"{float(p['precio_venta']):.2f}", "OK" if float(p["stock_actual"]) > float(p["stock_minimo"]) else "Bajo"] for p in productos]
-                try:
-                    pdf_i = _exportar_pdf_local("Maestro de Inventario Completo", cols_i, filas_i)
-                    st.download_button("📄 PDF Inventario", data=pdf_i, file_name="inventario_completo.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error PDF: {e}")
-            with ce2:
-                excel_i = _exportar_excel_local(df, "Inventario")
-                st.download_button("📊 Excel Inventario", data=excel_i, file_name="inventario_completo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            # Botón de exportación PDF mapeado al final de la visualización
+            st.markdown("---")
+            pdf_bytes = exportar_stock(productos)
+            st.download_button(
+                label="📄 Exportar stock PDF",
+                data=pdf_bytes,
+                file_name=f"stock_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
             if is_admin():
                 st.caption("Para editar un producto, ingresá su ID abajo:")
@@ -179,21 +130,6 @@ def render():
                 "Diferencia": f"{float(p['stock_actual']) - float(p['stock_minimo']):+g}",
             } for p in bajos])
             st.dataframe(df_bajo, use_container_width=True, hide_index=True)
-
-            # Exportar Alertas
-            st.markdown("###### 📥 Exportar lista de reposición / faltantes")
-            ca1, ca2 = st.columns(2)
-            with ca1:
-                cols_a = ["Producto", "Categoria", "Stock Actual", "Minimo", "Diferencia"]
-                filas_a = [[str(p["nombre"]), str(p.get("categoria") or "—"), f"{float(p['stock_actual']):g} {p['unidad']}", f"{float(p['stock_minimo']):g} {p['unidad']}", f"{float(p['stock_actual']) - float(p['stock_minimo']):+g}"] for p in bajos]
-                try:
-                    pdf_a = _exportar_pdf_local("Lista de Productos para Reposicion", cols_a, filas_a)
-                    st.download_button("📄 PDF Faltantes", data=pdf_a, file_name="lista_reposicion.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error PDF: {e}")
-            with ca2:
-                excel_a = _exportar_excel_local(df_bajo, "Reposicion")
-                st.download_button("📊 Excel Faltantes", data=excel_a, file_name="lista_reposicion.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 
 def _margen(p) -> str:
@@ -265,4 +201,4 @@ def _form_producto():
         st.session_state.pop("mostrar_form_prod", None)
         st.session_state.pop("form_producto", None)
         st.rerun()
-                                                       
+      
