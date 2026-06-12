@@ -4,52 +4,10 @@ pages/caja.py — Gestión de Caja
 
 import streamlit as st
 import pandas as pd
-import io
 from datetime import datetime, timedelta
-from fpdf import FPDF
 from db import get_ventas, get_resumen_caja, cerrar_caja, get_cierres, get_venta_detalle
 from utils import fmt_precio, MEDIOS_PAGO, get_usuario
-
-# ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
-def _exportar_excel_local(df, nombre_hoja="Datos"):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name=nombre_hoja)
-    return output.getvalue()
-
-def _exportar_pdf_local(titulo, columnas, filas):
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Usamos Arial estándar que es segura en FPDF
-    pdf.set_font("Arial", style="B", size=14)
-    # Limpiamos el título de caracteres especiales
-    titulo_limpio = str(titulo).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.cell(0, 10, txt=titulo_limpio, ln=True, align="C")
-    pdf.ln(8)
-    
-    pdf.set_font("Arial", style="B", size=10)
-    ancho_col = pdf.epw / len(columnas) if columnas else 30
-    
-    for col in columnas:
-        # Reemplazamos símbolos conflictivos en los encabezados
-        col_limpio = str(col).replace("$", "ARS").replace("Nº", "No.").replace("📋", "").replace("📊", "")
-        col_limpio = col_limpio.encode('latin-1', 'ignore').decode('latin-1')
-        pdf.cell(ancho_col, 8, txt=col_limpio, border=1, align="C")
-    pdf.ln()
-    
-    pdf.set_font("Arial", size=9)
-    for fila in filas:
-        for celda in fila:
-            # Reemplazamos el símbolo '$' por 'ARS' o vacío y filtramos emojis
-            celda_limpia = str(celda).replace("$", "").replace("Nº", "No.")
-            # Quitamos cualquier carácter con código alto (como emojis de medios de pago)
-            celda_limpia = "".join(c for c in celda_limpia if ord(c) < 128)
-            celda_limpia = celda_limpia.encode('latin-1', 'ignore').decode('latin-1')
-            pdf.cell(ancho_col, 8, txt=celda_limpia, border=1)
-        pdf.ln()
-        
-    return pdf.output()
+from pdf_exports import exportar_ventas_dia, exportar_cierres
 
 
 def render():
@@ -119,22 +77,16 @@ def render():
                 } for v in ventas_hoy])
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-                # Exportar Ventas de Hoy
-                st.markdown("###### 📥 Exportar listado de ventas actuales")
-                cx1, cx2 = st.columns(2)
-                with cx1:
-                    columnas_v = ["No.", "Hora", "Total", "Medio Pago", "Cajero"]
-                    # Pasamos los datos limpios de símbolos problemáticos al generador del PDF
-                    filas_v = [[str(v["id"]), v["fecha"].strftime("%H:%M"), f"{float(v['total']):.2f}", str(MEDIOS_PAGO.get(v["medio_pago"], v["medio_pago"])), str(v["cajero"])] for v in ventas_hoy]
-                    
-                    try:
-                        pdf_v = _exportar_pdf_local(f"Ventas del Dia {ahora.strftime('%d-%m-%Y')}", columnas_v, filas_v)
-                        st.download_button("📄 PDF Ventas", data=pdf_v, file_name=f"ventas_{ahora.strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error PDF: {e}")
-                with cx2:
-                    excel_v = _exportar_excel_local(df, "Ventas de Hoy")
-                    st.download_button("📊 Excel Ventas", data=excel_v, file_name=f"ventas_{ahora.strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                # Exportación PDF de ventas del día
+                st.markdown("<br>", unsafe_allow_html=True)
+                pdf_ventas = exportar_ventas_dia(ventas=ventas_hoy, resumen=resumen)
+                st.download_button(
+                    label="📄 Exportar ventas del día PDF",
+                    data=pdf_ventas,
+                    file_name=f"ventas_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
                 # Ver detalle de venta
                 with st.expander("🔍 Ver detalle de una venta"):
@@ -224,27 +176,14 @@ def render():
             } for c in cierres])
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-            # Exportar Historial
-            st.markdown("###### 📥 Exportar historial de cierres")
-            ch1, ch2 = st.columns(2)
-            with ch1:
-                cols_h = ["Apertura", "Cierre", "Cajero", "Ventas", "Efectivo", "Digital", "Total"]
-                filas_h = [[
-                    c["fecha_apertura"].strftime("%d/%m %H:%M") if c["fecha_apertura"] else "",
-                    c["fecha_cierre"].strftime("%d/%m %H:%M") if c["fecha_cierre"] else "",
-                    str(c["cajero"]),
-                    str(c["cantidad_ventas"]),
-                    f"{float(c['total_efectivo']):.2f}",
-                    f"{(float(c['total_debito']) + float(c['total_credito']) + float(c['total_transferencia'])):.2f}",
-                    f"{float(c['total_ventas']):.2f}"
-                ] for c in cierres]
-                
-                try:
-                    pdf_h = _exportar_pdf_local("Historial de Cierres de Caja", cols_h, filas_h)
-                    st.download_button("📄 PDF Historial", data=pdf_h, file_name="historial_cierres.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error PDF: {e}")
-            with ch2:
-                excel_h = _exportar_excel_local(df, "Historial Cierres")
-                st.download_button("📊 Excel Historial", data=excel_h, file_name="historial_cierres.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                    
+            # Exportación PDF de cierres de caja
+            st.markdown("<br>", unsafe_allow_html=True)
+            pdf_cierres = exportar_cierres(cierres=cierres)
+            st.download_button(
+                label="📄 Exportar historial de cierres PDF",
+                data=pdf_cierres,
+                file_name=f"cierres_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            
