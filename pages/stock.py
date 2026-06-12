@@ -4,11 +4,13 @@ pages/stock.py — Gestión de Stock
 
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 import io
 from fpdf import FPDF
 from db import (get_productos, get_categorias, ajustar_stock,
                 upsert_producto, get_productos_stock_bajo)
 from utils import fmt_precio, fmt_stock, get_usuario, is_admin, require_admin
+from pdf_exports import exportar_stock
 
 
 # ── FUNCIONES LOCALES DE EXPORTACIÓN (CORREGIDAS) ────────────────────────────
@@ -56,6 +58,15 @@ def render():
         col_left, col_right = st.columns([3, 1])
         with col_left:
             busqueda = st.text_input("🔍 Buscar", placeholder="Nombre de producto...", label_visibility="collapsed")
+          with col_right:   # o donde quieras el boton, fuera del with col_left
+    pdf_bytes = exportar_stock(productos)
+    st.download_button(
+        label="📄 Exportar stock PDF",
+        data=pdf_bytes,
+        file_name=f"stock_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
         with col_right:
             if is_admin():
                 if st.button("➕ Nuevo producto", use_container_width=True, type="primary"):
